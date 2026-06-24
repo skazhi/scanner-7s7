@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Сканер EAN-13</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #1a1a2e; color: white; margin: 0; padding: 20px; }
+        #scanner-container { width: 100%; max-width: 500px; margin: 20px auto; background: black; }
+        #scanner-container video { width: 100%; display: block; }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            font-size: 1.2em;
+            background: #16213e;
+            border-radius: 8px;
+            word-break: break-all;
+            min-height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .status-waiting { color: #9ca3af; }
+        .status-scanning { color: #fbbf24; }
+        .status-success { color: #4ade80; }
+        .status-error { color: #f87171; }
+        .status-sending { color: #60a5fa; }
+        #manual-input { margin-top: 20px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        #manual-input input { padding: 10px; font-size: 1em; flex-grow: 1; min-width: 200px; border-radius: 5px; border: none; }
+        #manual-input button { padding: 10px 20px; font-size: 1em; background: #4ade80; color: #1a1a2e; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        #manual-input button:active { background: #22c55e; }
+        .button { display: inline-block; margin-top: 15px; padding: 12px 30px; background: #4ade80; color: #1a1a2e; text-decoration: none; border-radius: 8px; font-weight: bold; border: none; cursor: pointer; }
+        .button:active { background: #22c55e; }
+        #fioDisplay {
+            margin-top: 10px;
+            font-size: 1.5em;
+            font-weight: bold;
+            min-height: 2em;
+        }
+    </style>
+</head>
+<body>
+    <h1>Сканер EAN-13</h1>
+    <p>Наведите камеру на штрих-код</p>
+
+    <div id="scanner-container"></div>
+
+    <div id="result" class="status-waiting">Ожидание сканирования...</div>
+    <div id="fioDisplay"></div>
+
+    <div id="manual-input">
+        <input type="text" id="barcodeInput" placeholder="Или введите код вручную">
+        <button onclick="sendBarcodeManually()">Отправить</button>
+    </div>
+
+    <button class="button" onclick="location.reload();">Перезапустить камеру</button>
+
+    <script>
+        // =================================================================
+        // ВАЖНО! ВСТАВЬТЕ СЮДА ВАШУ ПОСТОЯННУЮ ССЫЛКУ НА ВЕБ-ПРИЛОЖЕНИЕ
+        // =================================================================
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzSQLjVqD_K9AYVc2icpwWWij9QCsuQkg2Skjsqiu0V8tY6JAMb7gG0hQG7JeBnYops/exec';
+        // =================================================================
+
+        let lastScannedCode = '';
+        let isScanning = false;
+
+        // --- Функция для воспроизведения звука ---
+        function playBeep() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                oscillator.frequency.value = 880;
+                oscillator.type = 'sine';
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                oscillator.start(audioCtx.currentTime);
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } catch (e) {
+                console.log('Audio play failed:', e);
+            }
+        }
+
+        // --- Функция для обновления интерфейса ---
+        function updateUI(status, message, fio = '') {
+            const resultDiv = document.getElementById('result');
+            const fioDiv = document.getElementById('fioDisplay');
+            resultDiv.textContent = message;
+            resultDiv.className = status;
+            if (fio) {
+                fioDiv.textContent = '👤 ' + fio;
+                fioDiv.style.color = '#4ade80';
+            } else {
+                fioDiv.textContent = '';
+            }
+        }
+
+        // --- Обработка успешного сканирования ---
+        function onDetected(result) {
+            const code = result.codeResult.code;
+            if (code && code !== lastScannedCode && !isScanning) {
+                isScanning = true;
+                lastScannedCode = code;
+                playBeep();
+                updateUI('status-sending', `📤 Отправка кода ${code}...`);
+
+                // Отправляем данные в ваш Apps Script
+                fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `barcode=${encodeURIComponent(code)}&operation=issue`
+                })
+                .then(() => {
+                    // Так как mode: 'no-cors', мы не можем прочитать ответ,
+                    // но знаем, что запрос ушел. Показываем общий успех.
+                    // Для получения ФИО нужен отдельный запрос, но пока оставим так.
+                    updateUI('status-success', `✅ Код ${code} успешно отправлен!`);
+                    // Здесь можно было бы сделать второй запрос для получения ФИО,
+                    // но для простоты покажем только код.
+                    // Вы всегда можете посмотреть ФИО в Google Таблице.
+                    setTimeout(() => {
+                        isScanning = false;
+                        updateUI('status-waiting', 'Готов к сканированию...');
+                    }, 3000);
+                })
+                .catch(error => {
+                    updateUI('status-error', `❌ Ошибка отправки: ${error.message}`);
+                    setTimeout(() => {
+                        isScanning = false;
+                        updateUI('status-waiting', 'Готов к сканированию...');
+                    }, 3000);
+                });
+            }
+        }
+
+        // --- Отправка кода вручную ---
+        function sendBarcodeManually() {
+            const input = document.getElementById('barcodeInput');
+            const code = input.value.trim();
+            if (code) {
+                // Имитируем событие сканирования
+                onDetected({ codeResult: { code: code } });
+                input.value = '';
+            }
+        }
+
+        // --- Инициализация сканера ---
+        function initScanner() {
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: document.querySelector('#scanner-container'),
+                    constraints: {
+                        width: { min: 640 },
+                        height: { min: 480 },
+                        facingMode: "environment"
+                    },
+                },
+                decoder: {
+                    readers: ["ean_reader"]
+                }
+            }, function(err) {
+                if (err) {
+                    console.error(err);
+                    updateUI('status-error', `❌ Ошибка камеры: ${err.message || err}`);
+                    return;
+                }
+                Quagga.start();
+                updateUI('status-scanning', '🔍 Сканирование...');
+            });
+
+            Quagga.onDetected(onDetected);
+        }
+
+        // Запускаем сканер после загрузки страницы
+        window.onload = initScanner;
+    </script>
+</body>
+</html>
